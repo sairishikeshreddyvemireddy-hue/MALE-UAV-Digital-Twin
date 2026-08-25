@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>MALE-UAV-DT-001 — Engine Health Monitoring</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Courier+Prime:wght@400;700&family=Oswald:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+  :root {
+    --paper: #ddd6c1;
+    --paper-light: #e7e1d0;
+    --ink: #253d52;
+    --ink-faint: #6c7f8f;
+    --ink-hair: #9aa9b3;
+    --oxide: #9a3324;
+    --olive: #7a6a2e;
+    --stencil: 'Oswald', sans-serif;
+    --mono: 'Space Mono', monospace;
+    --type: 'Courier Prime', monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--paper);
+    background-image:
+      linear-gradient(var(--ink-hair) 1px, transparent 1px),
+      linear-gradient(90deg, var(--ink-hair) 1px, transparent 1px);
+    background-size: 28px 28px;
+    background-position: -1px -1px;
+    color: var(--ink);
+    font-family: var(--type);
+    margin: 0;
+    padding: 24px;
+    min-height: 100vh;
+    position: relative;
+  }
+  body::before, body::after,
+  .reg-tl, .reg-tr, .reg-bl, .reg-br { display: none; }
+
+  /* corner registration marks, like a drawing sheet */
+  .sheet { position: relative; border: 1.5px solid var(--ink); background: var(--paper-light); padding: 0; }
+  .sheet::before, .sheet::after,
+  .sheet .rmark { content: ''; position: absolute; width: 16px; height: 16px; }
+  .rmark { position: absolute; }
+  .rmark::before, .rmark::after { content: ''; position: absolute; background: var(--ink); }
+  .rmark::before { width: 16px; height: 1.5px; top: 7px; left: 0; }
+  .rmark::after  { width: 1.5px; height: 16px; left: 7px; top: 0; }
+  .rmark.tl { top: -8px; left: -8px; }
+  .rmark.tr { top: -8px; right: -8px; }
+  .rmark.bl { bottom: -8px; left: -8px; }
+  .rmark.br { bottom: -8px; right: -8px; }
+
+  /* ---------- Header / title strip ---------- */
+  .titlestrip {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    border-bottom: 1.5px solid var(--ink);
+    padding: 18px 24px 12px;
+    flex-wrap: wrap; gap: 12px;
+  }
+  .titlestrip h1 {
+    font-family: var(--stencil); font-weight: 600; text-transform: uppercase;
+    letter-spacing: 2px; font-size: 20px; margin: 0; color: var(--ink);
+  }
+  .titlestrip .doc-no { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
+  .rev-mark { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); text-align: right; line-height: 1.6; }
+
+  /* ---------- Control strip ---------- */
+  .ctrlstrip {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 24px; border-bottom: 1px dashed var(--ink-hair);
+    font-family: var(--mono); font-size: 11px;
+  }
+  .ctrlstrip label { color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.5px; }
+  input, select, button {
+    font-family: var(--mono); font-size: 11px;
+    background: var(--paper);
+    border: 1px solid var(--ink);
+    color: var(--ink);
+    padding: 5px 9px;
+  }
+  input { width: 56px; }
+  button {
+    cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px;
+    border-radius: 0;
+  }
+  button:hover { background: var(--ink); color: var(--paper); }
+  button:disabled { opacity: 0.3; cursor: not-allowed; }
+  button:disabled:hover { background: var(--paper); color: var(--ink); }
+
+  .status-flag { display: flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; }
+  .status-glyph { font-size: 13px; }
+  .status-glyph.ok::before { content: "\25CF"; color: var(--ink-faint); }
+  .status-glyph.live::before { content: "\25CF"; color: var(--olive); }
+  .status-glyph.fault::before { content: "\2716"; color: var(--oxide); }
+
+  /* ---------- Body grid ---------- */
+  .body-grid { display: grid; grid-template-columns: 1fr 300px; gap: 0; }
+  @media (max-width: 880px) { .body-grid { grid-template-columns: 1fr; } }
+
+  .readouts {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    border-right: 1px solid var(--ink-hair);
+  }
+  @media (max-width: 640px) { .readouts { grid-template-columns: repeat(2, 1fr); } }
+
+  .cell {
+    border-bottom: 1px solid var(--ink-hair);
+    border-right: 1px solid var(--ink-hair);
+    padding: 12px 14px;
+    position: relative;
+  }
+  .cell:nth-child(4n) { border-right: none; }
+
+  .cell .tag {
+    font-family: var(--stencil); font-size: 10px; text-transform: uppercase;
+    letter-spacing: 1px; color: var(--ink-faint); display: flex; justify-content: space-between;
+  }
+  .cell .flag { font-family: var(--mono); font-size: 9px; }
+  .cell .flag.caution { color: var(--olive); }
+  .cell .flag.critical { color: var(--oxide); }
+
+  .cell .val {
+    font-family: var(--mono); font-weight: 700; font-size: 26px;
+    margin-top: 4px; color: var(--ink);
+  }
+  .cell.caution .val { color: var(--olive); }
+  .cell.critical .val { color: var(--oxide); }
+  .cell .unit { font-size: 10px; color: var(--ink-faint); font-family: var(--mono); margin-left: 3px; }
+
+  canvas.spark { width: 100%; height: 22px; margin-top: 6px; opacity: 0.85; }
+
+  .chart-cell { grid-column: 1 / -1; padding: 14px; }
+  .chart-cell .tag { margin-bottom: 8px; }
+  .chart-canvas { height: 190px; }
+
+  /* ---------- Sidebar: dial + log ---------- */
+  .sidebar { display: flex; flex-direction: column; }
+  .dial-block { padding: 16px; border-bottom: 1px solid var(--ink-hair); text-align: center; }
+  .dial-block .tag { font-family: var(--stencil); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-faint); text-align: left; margin-bottom: 6px; }
+
+  .rul-line { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); margin-top: 6px; }
+  .rul-line b { color: var(--ink); }
+
+  .log-block { padding: 14px; flex: 1; }
+  .log-block .tag { font-family: var(--stencil); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--ink-faint); display: flex; justify-content: space-between; margin-bottom: 8px; }
+  .log-list { max-height: 320px; overflow-y: auto; }
+  .log-entry {
+    font-family: var(--mono); font-size: 11px;
+    padding: 6px 0; border-bottom: 1px dashed var(--ink-hair);
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+  .log-entry .code { color: var(--oxide); }
+  .log-entry .t { color: var(--ink-faint); white-space: nowrap; }
+  .log-empty { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); font-style: italic; }
+
+  /* ---------- Title block, bottom of sheet -- like a real drawing ---------- */
+  .titleblock {
+    border-top: 1.5px solid var(--ink);
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    font-family: var(--mono); font-size: 10px;
+  }
+  .titleblock .tb-cell { border-right: 1px solid var(--ink-hair); padding: 8px 12px; }
+  .titleblock .tb-cell:last-child { border-right: none; }
+  .titleblock .tb-label { color: var(--ink-faint); text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-bottom: 3px; }
+  .titleblock .tb-val { color: var(--ink); font-weight: 700; }
+</style>
+</head>
+<body>
+
+<!-- EDIT THIS: point at your backend's forwarded Codespace URL -->
+<script>
+  const API_BASE = "https://ominous-orbit-p77v7xggw75r3r577-8000.app.github.dev";
+</script>
+
+<div class="sheet">
+  <span class="rmark tl"></span><span class="rmark tr"></span>
+  <span class="rmark bl"></span><span class="rmark br"></span>
+
+  <div class="titlestrip">
+    <div>
+      <h1>Aero Piston Engine — Health Monitoring</h1>
+      <div class="doc-no">MALE-UAV-DT-001 &nbsp;·&nbsp; DIGITAL TWIN GROUND STATION</div>
+    </div>
+    <div class="rev-mark">
+      REV — &nbsp;LIVE TELEMETRY<br>
+      SHEET 1 OF 1
+    </div>
+  </div>
+
+  <div class="ctrlstrip">
+    <div class="status-flag"><span class="status-glyph ok" id="statusGlyph"></span><span id="connSub">disconnected</span></div>
+    <label>Mission ID</label>
+    <input type="number" id="missionIdInput" value="1">
+    <button id="connectBtn">Connect</button>
+    <label>Inject Fault</label>
+    <select id="faultSelect">
+      <option value="misfire">misfire</option>
+      <option value="injector_abnormality">injector_abnormality</option>
+      <option value="cooling_degradation">cooling_degradation</option>
+      <option value="lubrication_issue">lubrication_issue</option>
+      <option value="sensor_drift">sensor_drift</option>
+      <option value="combustion_instability">combustion_instability</option>
+      <option value="overheating">overheating</option>
+      <option value="abnormal_vibration">abnormal_vibration</option>
+    </select>
+    <button id="injectBtn" disabled>Inject</button>
+    <button id="stopBtn" disabled>Stop Mission</button>
+  </div>
+
+  <div class="body-grid">
+    <div class="readouts">
+      <div class="cell" id="card-rpm">
+        <div class="tag"><span>RPM</span><span class="flag" id="rpm-flag"></span></div>
+        <div class="val"><span id="rpm-val">—</span></div>
+        <canvas class="spark" id="rpm-spark"></canvas>
+      </div>
+      <div class="cell" id="card-cht">
+        <div class="tag"><span>Cyl. Head Temp</span><span class="flag" id="cht-flag"></span></div>
+        <div class="val"><span id="cht-val">—</span><span class="unit">°C</span></div>
+        <canvas class="spark" id="cht-spark"></canvas>
+      </div>
+      <div class="cell" id="card-egt">
+        <div class="tag"><span>Exhaust Gas Temp</span><span class="flag" id="egt-flag"></span></div>
+        <div class="val"><span id="egt-val">—</span><span class="unit">°C</span></div>
+        <canvas class="spark" id="egt-spark"></canvas>
+      </div>
+      <div class="cell" id="card-oilp">
+        <div class="tag"><span>Oil Pressure</span><span class="flag" id="oilp-flag"></span></div>
+        <div class="val"><span id="oilp-val">—</span><span class="unit">kPa</span></div>
+        <canvas class="spark" id="oilp-spark"></canvas>
+      </div>
+      <div class="cell" id="card-oilt">
+        <div class="tag"><span>Oil Temp</span><span class="flag" id="oilt-flag"></span></div>
+        <div class="val"><span id="oilt-val">—</span><span class="unit">°C</span></div>
+        <canvas class="spark" id="oilt-spark"></canvas>
+      </div>
+      <div class="cell" id="card-vib">
+        <div class="tag"><span>Vibration</span><span class="flag" id="vib-flag"></span></div>
+        <div class="val"><span id="vib-val">—</span><span class="unit">g</span></div>
+        <canvas class="spark" id="vib-spark"></canvas>
+      </div>
+      <div class="cell" id="card-fuel">
+        <div class="tag"><span>Fuel Flow</span></div>
+        <div class="val"><span id="fuel-val">—</span><span class="unit">L/h</span></div>
+        <canvas class="spark" id="fuel-spark"></canvas>
+      </div>
+      <div class="cell" id="card-batt">
+        <div class="tag"><span>Battery</span><span class="flag" id="batt-flag"></span></div>
+        <div class="val"><span id="batt-val">—</span><span class="unit">V</span></div>
+        <canvas class="spark" id="batt-spark"></canvas>
+      </div>
+
+      <div class="cell chart-cell">
+        <div class="tag"><span>Thermal Trend — CHT / EGT, last 60s</span><span id="mission-profile"></span></div>
+        <div class="chart-canvas"><canvas id="thermalChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <div class="dial-block">
+        <div class="tag">Engine Health Index</div>
+        <svg viewBox="0 0 200 130" width="230">
+          <!-- tick marks, hand-instrument style -->
+          <g id="ticks" stroke="#253d52" stroke-width="1.5"></g>
+          <path d="M 26 108 A 74 74 0 0 1 174 108" fill="none" stroke="#9aa9b3" stroke-width="2"/>
+          <line id="needle" x1="100" y1="108" x2="100" y2="40" stroke="#9a3324" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="100" cy="108" r="5" fill="#253d52"/>
+          <text x="30" y="122" font-family="Space Mono" font-size="8" fill="#6c7f8f">0</text>
+          <text x="165" y="122" font-family="Space Mono" font-size="8" fill="#6c7f8f">100</text>
+        </svg>
+        <div class="val" style="font-size:30px;" id="health-val">—</div>
+        <div class="rul-line">EST. REMAINING USEFUL LIFE — <b id="rul-val">n/a</b></div>
+      </div>
+
+      <div class="dial-block" style="text-align:left;">
+        <div class="tag">AI Diagnosis</div>
+        <div id="diagnosis-empty" class="rul-line" style="margin-top:0;">No confirmed fault — system nominal.</div>
+        <div id="diagnosis-content" style="display:none; font-family: var(--mono); font-size: 12px;">
+          <div style="margin-bottom:6px;">
+            <b id="diag-fault" style="color: var(--oxide); font-size: 14px;"></b>
+            &nbsp;<span id="diag-confidence" style="color: var(--ink-faint);"></span>
+          </div>
+          <div id="diag-cause" style="color: var(--ink-faint); line-height:1.5;"></div>
+        </div>
+      </div>
+
+      <div class="log-block">
+        <div class="tag"><span>Fault Log</span><span id="fault-count">0 logged</span></div>
+        <div class="log-list" id="alertLog">
+          <div class="log-empty">— no faults logged this session —</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="titleblock">
+    <div class="tb-cell"><span class="tb-label">Mission</span><span class="tb-val" id="tb-mission">—</span></div>
+    <div class="tb-cell"><span class="tb-label">Profile</span><span class="tb-val" id="tb-profile">—</span></div>
+    <div class="tb-cell"><span class="tb-label">Elapsed</span><span class="tb-val" id="tb-elapsed">—</span></div>
+    <div class="tb-cell"><span class="tb-label">Status</span><span class="tb-val" id="tb-status">STANDBY</span></div>
+    <div class="tb-cell"><span class="tb-label">Sheet</span><span class="tb-val">1 / 1</span></div>
+  </div>
+</div>
+
+<script>
+const HISTORY_LEN = 60;
+const THRESHOLDS = {
+  rpm:  { caution: 6000, critical: 6400 },
+  cht:  { caution: 220,  critical: 250 },
+  egt:  { caution: 850,  critical: 900 },
+  oilp: { caution: 200,  critical: 150, lowerIsBad: true },
+  oilt: { caution: 120,  critical: 140 },
+  vib:  { caution: 0.9,  critical: 1.3 },
+  batt: { caution: 26,   critical: 24,  lowerIsBad: true },
+};
+
+let ws = null;
+let currentMissionId = null;
+const history = { rpm: [], cht: [], egt: [], oilp: [], oilt: [], vib: [], fuel: [], batt: [] };
+const seenFaultTypes = new Set();
+
+// draw hand-instrument tick marks once
+(function drawTicks() {
+  const g = document.getElementById('ticks');
+  const cx = 100, cy = 108, rOuter = 74, rInner = 66;
+  for (let i = 0; i <= 10; i++) {
+    const angle = Math.PI - (i / 10) * Math.PI;
+    const x1 = cx + rOuter * Math.cos(angle), y1 = cy - rOuter * Math.sin(angle);
+    const x2 = cx + rInner * Math.cos(angle), y2 = cy - rInner * Math.sin(angle);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+    g.appendChild(line);
+  }
+})();
+
+function statusClass(value, cfg) {
+  if (!cfg) return '';
+  if (cfg.lowerIsBad) {
+    if (value <= cfg.critical) return 'critical';
+    if (value <= cfg.caution) return 'caution';
+  } else {
+    if (value >= cfg.critical) return 'critical';
+    if (value >= cfg.caution) return 'caution';
+  }
+  return '';
+}
+
+function setReadout(id, value, decimals, cfg) {
+  document.getElementById(id + '-val').textContent = value.toFixed(decimals);
+  const cls = statusClass(value, cfg);
+  const card = document.getElementById('card-' + id);
+  card.className = 'cell' + (cls ? ' ' + cls : '');
+  const flagEl = document.getElementById(id + '-flag');
+  if (flagEl) {
+    flagEl.className = 'flag' + (cls ? ' ' + cls : '');
+    flagEl.textContent = cls === 'critical' ? 'CRIT' : cls === 'caution' ? 'CAUTION' : '';
+  }
+}
+
+function pushHistory(key, value) {
+  history[key].push(value);
+  if (history[key].length > HISTORY_LEN) history[key].shift();
+}
+
+function drawSpark(canvasId, data, color) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || data.length < 2) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width = canvas.clientWidth * 2;
+  const h = canvas.height = canvas.clientHeight * 2;
+  ctx.clearRect(0, 0, w, h);
+  const min = Math.min(...data), max = Math.max(...data);
+  const range = (max - min) || 1;
+  ctx.beginPath();
+  data.forEach((v, i) => {
+    const x = (i / (data.length - 1)) * w;
+    const y = h - ((v - min) / range) * (h - 6) - 3;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.stroke();
+}
+
+let thermalChart;
+function initChart() {
+  const ctx = document.getElementById('thermalChart').getContext('2d');
+  thermalChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'CHT', data: [], borderColor: '#253d52', backgroundColor: 'transparent', tension: 0.2, pointRadius: 0, borderWidth: 2 },
+        { label: 'EGT', data: [], borderColor: '#9a3324', backgroundColor: 'transparent', tension: 0.2, pointRadius: 0, borderWidth: 2, borderDash: [4, 3] },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      scales: {
+        x: { ticks: { color: '#6c7f8f', font: { family: 'Space Mono', size: 9 } }, grid: { color: '#9aa9b3' } },
+        y: { ticks: { color: '#6c7f8f', font: { family: 'Space Mono', size: 9 } }, grid: { color: '#9aa9b3' } },
+      },
+      plugins: { legend: { labels: { color: '#253d52', font: { family: 'Courier Prime', size: 10 } } } }
+    }
+  });
+}
+
+function updateChart(t, cht, egt) {
+  const labels = thermalChart.data.labels;
+  labels.push(t);
+  thermalChart.data.datasets[0].data.push(cht);
+  thermalChart.data.datasets[1].data.push(egt);
+  if (labels.length > HISTORY_LEN) {
+    labels.shift();
+    thermalChart.data.datasets[0].data.shift();
+    thermalChart.data.datasets[1].data.shift();
+  }
+  thermalChart.update('none');
+}
+
+// naive client-side health index -- illustrative until the trained ML
+// model (ml/anomaly_detection.py) is wired into the backend's live loop
+function estimateHealth(sample) {
+  let score = 100;
+  const penalties = {
+    misfire: 25, injector_abnormality: 20, cooling_degradation: 20,
+    lubrication_issue: 30, sensor_drift: 10, combustion_instability: 25,
+    overheating: 25, abnormal_vibration: 20,
+  };
+  (sample.active_faults || []).forEach(f => { score -= (penalties[f] || 15); });
+  return Math.max(5, Math.min(100, score));
+}
+
+function updateDial(score) {
+  document.getElementById('health-val').textContent = Math.round(score);
+  const needle = document.getElementById('needle');
+  const cx = 100, cy = 108, len = 68;
+  const angle = Math.PI - (score / 100) * Math.PI;
+  const x2 = cx + len * Math.cos(angle), y2 = cy - len * Math.sin(angle);
+  needle.setAttribute('x2', x2); needle.setAttribute('y2', y2);
+  let color = '#253d52';
+  if (score < 40) color = '#9a3324'; else if (score < 70) color = '#7a6a2e';
+  needle.setAttribute('stroke', color);
+  document.getElementById('health-val').style.color = color;
+}
+
+function logFault(faultType, simTime) {
+  const log = document.getElementById('alertLog');
+  if (log.querySelector('.log-empty')) log.innerHTML = '';
+  const item = document.createElement('div');
+  item.className = 'log-entry';
+  item.innerHTML = `<span class="code">${faultType.toUpperCase().replace(/_/g, ' ')}</span><span class="t">t=${simTime}s</span>`;
+  log.prepend(item);
+  document.getElementById('fault-count').textContent = seenFaultTypes.size + ' logged';
+}
+
+function setConnected(isLive, missionId) {
+  const glyph = document.getElementById('statusGlyph');
+  const sub = document.getElementById('connSub');
+  glyph.className = 'status-glyph ' + (isLive ? 'live' : 'ok');
+  sub.textContent = isLive ? 'LIVE — receiving telemetry' : 'disconnected';
+  document.getElementById('tb-mission').textContent = isLive ? ('#' + missionId) : '—';
+  document.getElementById('tb-status').textContent = isLive ? 'RUNNING' : 'STANDBY';
+  document.getElementById('injectBtn').disabled = !isLive;
+  document.getElementById('stopBtn').disabled = !isLive;
+}
+
+document.getElementById('connectBtn').addEventListener('click', () => {
+  const missionId = document.getElementById('missionIdInput').value;
+  if (!missionId) return;
+  if (ws) ws.close();
+
+  currentMissionId = missionId;
+  seenFaultTypes.clear();
+  Object.keys(history).forEach(k => history[k] = []);
+  document.getElementById('alertLog').innerHTML = '<div class="log-empty">— no faults logged this session —</div>';
+
+  const wsUrl = API_BASE.replace('https://', 'wss://').replace('http://', 'ws://') + `/ws/telemetry/${missionId}`;
+  ws = new WebSocket(wsUrl);
+
+  ws.onopen = () => setConnected(true, missionId);
+  ws.onclose = () => setConnected(false, missionId);
+  ws.onerror = () => setConnected(false, missionId);
+
+  ws.onmessage = (event) => {
+    const s = JSON.parse(event.data);
+
+    setReadout('rpm', s.rpm, 0, THRESHOLDS.rpm);
+    setReadout('cht', s.cylinder_head_temp_c, 1, THRESHOLDS.cht);
+    setReadout('egt', s.exhaust_gas_temp_c, 1, THRESHOLDS.egt);
+    setReadout('oilp', s.oil_pressure_kpa, 1, THRESHOLDS.oilp);
+    setReadout('oilt', s.oil_temp_c, 1, THRESHOLDS.oilt);
+    setReadout('vib', s.vibration_g, 3, THRESHOLDS.vib);
+    setReadout('fuel', s.fuel_flow_lph, 2, null);
+    setReadout('batt', s.battery_voltage_v, 2, THRESHOLDS.batt);
+
+    document.getElementById('mission-profile').textContent = s.mission_profile;
+    document.getElementById('tb-profile').textContent = s.mission_profile;
+    document.getElementById('tb-elapsed').textContent = s.timestamp.toFixed(0) + 's';
+
+    pushHistory('rpm', s.rpm); drawSpark('rpm-spark', history.rpm, '#253d52');
+    pushHistory('cht', s.cylinder_head_temp_c); drawSpark('cht-spark', history.cht, '#253d52');
+    pushHistory('egt', s.exhaust_gas_temp_c); drawSpark('egt-spark', history.egt, '#9a3324');
+    pushHistory('oilp', s.oil_pressure_kpa); drawSpark('oilp-spark', history.oilp, '#253d52');
+    pushHistory('oilt', s.oil_temp_c); drawSpark('oilt-spark', history.oilt, '#253d52');
+    pushHistory('vib', s.vibration_g); drawSpark('vib-spark', history.vib, '#253d52');
+    pushHistory('fuel', s.fuel_flow_lph); drawSpark('fuel-spark', history.fuel, '#253d52');
+    pushHistory('batt', s.battery_voltage_v); drawSpark('batt-spark', history.batt, '#253d52');
+
+    updateChart(s.timestamp, s.cylinder_head_temp_c, s.exhaust_gas_temp_c);
+
+    // Use the backend's real ML-computed health score when available
+    // (once the trained model is loaded server-side); fall back to the
+    // simple rule-of-thumb estimate only if the backend hasn't sent one
+    // (e.g. no model has been trained yet).
+    const health = (typeof s.health_score === 'number') ? s.health_score : estimateHealth(s);
+    updateDial(health);
+
+    if (typeof s.rul_hours === 'number') {
+      document.getElementById('rul-val').textContent = (s.rul_hours * 60).toFixed(1) + ' min';
+    } else {
+      document.getElementById('rul-val').textContent = 'n/a';
+    }
+    document.getElementById('statusGlyph').className = 'status-glyph ' + (
+      (s.active_faults && s.active_faults.length) ? 'fault' : 'live'
+    );
+
+    // AI Diagnosis panel -- only populated once the backend confirms a
+    // sustained alert AND the fault classifier has produced a diagnosis
+    // for it (both fields arrive together from the backend).
+    if (s.confirmed_alert && s.predicted_fault) {
+      document.getElementById('diagnosis-empty').style.display = 'none';
+      document.getElementById('diagnosis-content').style.display = 'block';
+      document.getElementById('diag-fault').textContent = s.predicted_fault.toUpperCase().replace(/_/g, ' ');
+      document.getElementById('diag-confidence').textContent = (s.diagnosis_confidence * 100).toFixed(0) + '% confidence';
+      document.getElementById('diag-cause').textContent = s.root_cause;
+    } else if (!s.active_faults || !s.active_faults.length) {
+      document.getElementById('diagnosis-empty').style.display = 'block';
+      document.getElementById('diagnosis-content').style.display = 'none';
+    }
+
+    (s.active_faults || []).forEach(f => {
+      if (!seenFaultTypes.has(f)) {
+        seenFaultTypes.add(f);
+        logFault(f, s.timestamp.toFixed(0));
+      }
+    });
+  };
+});
+
+document.getElementById('injectBtn').addEventListener('click', async () => {
+  if (!currentMissionId) return;
+  const faultType = document.getElementById('faultSelect').value;
+  await fetch(`${API_BASE}/missions/${currentMissionId}/inject-fault?fault_type=${faultType}`, { method: 'POST' });
+});
+
+document.getElementById('stopBtn').addEventListener('click', async () => {
+  if (!currentMissionId) return;
+  await fetch(`${API_BASE}/missions/${currentMissionId}/stop`, { method: 'POST' });
+  if (ws) ws.close();
+  setConnected(false, currentMissionId);
+});
+
+initChart();
+</script>
+
+</body>
+</html>
