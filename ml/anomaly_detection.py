@@ -163,6 +163,58 @@ class RULEstimator:
         return max(0.0, rul_seconds)
 
 
+def summarize_degradation(points: list[tuple[float, float]], window_size: int = 60) -> dict:
+    """Summarize recent health decline from ``(time_seconds, health_score)`` points."""
+    if len(points) < 2:
+        return {
+            "state": "insufficient_data",
+            "sample_count": len(points),
+            "health_score": points[-1][1] if points else None,
+            "degradation_rate_per_hour": None,
+            "health_change": None,
+            "predicted_health_1h": None,
+            "predicted_health_6h": None,
+            "trend_confidence": None,
+        }
+
+    recent = points[-window_size:]
+    times = np.array([point[0] for point in recent])
+    scores = np.array([point[1] for point in recent])
+    slope_per_second = float(np.polyfit(times, scores, 1)[0])
+    intercept = float(np.polyfit(times, scores, 1)[1])
+    rate_per_hour = slope_per_second * 3600.0
+    baseline_count = min(10, len(points))
+    baseline = float(np.mean([score for _, score in points[:baseline_count]]))
+    current = float(scores[-1])
+    health_change = current - baseline
+    predictions = {
+        horizon: round(max(0.0, min(100.0, intercept + slope_per_second * (times[-1] + horizon * 3600))), 1)
+        for horizon in (1, 6)
+    }
+    fitted = intercept + slope_per_second * times
+    variance = float(np.sum((scores - np.mean(scores)) ** 2))
+    residual_variance = float(np.sum((scores - fitted) ** 2))
+    trend_confidence = 1.0 - (residual_variance / variance) if variance else 1.0
+
+    if current < 40 or rate_per_hour <= -20:
+        state = "critical"
+    elif rate_per_hour <= -5:
+        state = "degrading"
+    else:
+        state = "stable"
+
+    return {
+        "state": state,
+        "sample_count": len(points),
+        "health_score": round(current, 1),
+        "degradation_rate_per_hour": round(rate_per_hour, 2),
+        "health_change": round(health_change, 1),
+        "predicted_health_1h": predictions[1],
+        "predicted_health_6h": predictions[6],
+        "trend_confidence": round(max(0.0, min(1.0, trend_confidence)), 2),
+    }
+
+
 # --------------------------------------------------------------------------
 @dataclass
 class AlertDebouncer:

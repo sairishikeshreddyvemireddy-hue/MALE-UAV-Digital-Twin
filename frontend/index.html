@@ -209,7 +209,20 @@
     <button id="injectBtn" disabled>Inject</button>
     <button id="stopBtn" disabled>Stop Mission</button>
   </div>
-
+    <div class="ctrlstrip" id="newMissionStrip">
+    <label>New Mission — Engine</label>
+    <select id="engineSelect"><option value="">loading…</option></select>
+    <label>Environmental Profile</label>
+    <select id="profileSelect">
+      <option value="cruise">cruise</option>
+      <option value="high_altitude">high_altitude</option>
+      <option value="endurance">endurance</option>
+      <option value="hot_weather">hot_weather</option>
+      <option value="rapid_throttle_transitions">rapid_throttle_transitions</option>
+    </select>
+    <button id="newEngineBtn">+ New Engine</button>
+    <button id="startMissionBtn">Start New Mission</button>
+  </div>
   <div class="body-grid">
     <div class="readouts">
       <div class="cell" id="card-rpm">
@@ -285,6 +298,14 @@
           </div>
           <div id="diag-cause" style="color: var(--ink-faint); line-height:1.5;"></div>
         </div>
+      </div>
+
+      <div class="dial-block" style="text-align:left;">
+        <div class="tag"><span>Degradation Tracking</span><span id="degradation-state">—</span></div>
+        <div class="rul-line">HEALTH CHANGE — <b id="degradation-change">n/a</b></div>
+        <div class="rul-line">RATE — <b id="degradation-rate">n/a</b></div>
+        <div class="rul-line">FORECAST 1H / 6H — <b id="degradation-forecast">n/a</b></div>
+        <div class="rul-line">TREND CONFIDENCE — <b id="degradation-confidence">n/a</b></div>
       </div>
 
       <div class="log-block">
@@ -446,6 +467,15 @@ function updateDial(score) {
   document.getElementById('health-val').style.color = color;
 }
 
+function updateDegradation(summary) {
+  if (!summary || summary.state === 'insufficient_data') return;
+  document.getElementById('degradation-state').textContent = summary.state.toUpperCase();
+  document.getElementById('degradation-change').textContent = `${summary.health_change >= 0 ? '+' : ''}${summary.health_change.toFixed(1)} pts`;
+  document.getElementById('degradation-rate').textContent = `${summary.degradation_rate_per_hour >= 0 ? '+' : ''}${summary.degradation_rate_per_hour.toFixed(1)} pts/h`;
+  document.getElementById('degradation-forecast').textContent = `${summary.predicted_health_1h.toFixed(1)} / ${summary.predicted_health_6h.toFixed(1)}`;
+  document.getElementById('degradation-confidence').textContent = `${(summary.trend_confidence * 100).toFixed(0)}%`;
+}
+
 function logFault(faultType, simTime) {
   const log = document.getElementById('alertLog');
   if (log.querySelector('.log-empty')) log.innerHTML = '';
@@ -517,6 +547,7 @@ document.getElementById('connectBtn').addEventListener('click', () => {
     // (e.g. no model has been trained yet).
     const health = (typeof s.health_score === 'number') ? s.health_score : estimateHealth(s);
     updateDial(health);
+    updateDegradation(s.degradation);
 
     if (typeof s.rul_hours === 'number') {
       document.getElementById('rul-val').textContent = (s.rul_hours * 60).toFixed(1) + ' min';
@@ -564,6 +595,43 @@ document.getElementById('stopBtn').addEventListener('click', async () => {
 });
 
 initChart();
+loadEngines();
+
+async function loadEngines() {
+  const sel = document.getElementById('engineSelect');
+  try {
+    const res = await fetch(`${API_BASE}/engines`);
+    const engines = await res.json();
+    sel.innerHTML = '';
+    if (!engines.length) { sel.innerHTML = '<option value="">no engines yet</option>'; return; }
+    engines.forEach(e => {
+      const opt = document.createElement('option');
+      opt.value = e.id;
+      opt.textContent = `#${e.id} ${e.serial_number}`;
+      sel.appendChild(opt);
+    });
+  } catch (err) {
+    sel.innerHTML = '<option value="">failed to load</option>';
+  }
+}
+
+document.getElementById('newEngineBtn').addEventListener('click', async () => {
+  const serial = prompt('Serial number for the new engine (e.g. ENG-002):');
+  if (!serial) return;
+  await fetch(`${API_BASE}/engines?serial_number=${encodeURIComponent(serial)}`, { method: 'POST' });
+  await loadEngines();
+});
+
+document.getElementById('startMissionBtn').addEventListener('click', async () => {
+  const engineId = document.getElementById('engineSelect').value;
+  const profile = document.getElementById('profileSelect').value;
+  if (!engineId) { alert('Select or create an engine first.'); return; }
+  const res = await fetch(`${API_BASE}/missions/start?engine_id=${engineId}&profile=${profile}`, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) { alert('Failed to start mission: ' + (data.detail || res.status)); return; }
+  document.getElementById('missionIdInput').value = data.mission_id;
+  document.getElementById('connectBtn').click();
+});
 </script>
 
 </body>

@@ -42,7 +42,7 @@ from database.models import (
     Engine, Mission, TelemetryReading, FaultEvent, HealthIndex,
 )
 from simulator.engine_simulator import EngineSimulator, MissionProfile, FaultType
-from ml.anomaly_detection import AnomalyDetector, RULEstimator, AlertDebouncer
+from ml.anomaly_detection import AnomalyDetector, RULEstimator, AlertDebouncer, summarize_degradation
 from ml.fault_classifier import FaultClassifier
 
 
@@ -109,6 +109,7 @@ class RunningMission:
         # since mixing missions together would produce nonsense trends.
         self.rul_estimator = RULEstimator()
         self.debouncer = AlertDebouncer(required_consecutive=3)
+        self.health_history: list[tuple[float, float]] = []
 
 
 active_missions: Dict[int, RunningMission] = {}
@@ -188,6 +189,8 @@ async def run_simulation_loop(mission_id: int, running: RunningMission):
             if ml_ready:
                 result = ml_detector.score(sample)
                 rul_seconds = running.rul_estimator.update(sample["timestamp"], result["health_score"])
+                running.health_history.append((sample["timestamp"], result["health_score"]))
+                degradation = summarize_degradation(running.health_history)
                 confirmed_alert = running.debouncer.update(result["is_anomaly"])
                 rul_hours = (rul_seconds / 3600.0) if rul_seconds is not None else None
 
@@ -203,6 +206,7 @@ async def run_simulation_loop(mission_id: int, running: RunningMission):
                     "is_anomaly": result["is_anomaly"],
                     "confirmed_alert": confirmed_alert,
                     "rul_hours": rul_hours,
+                    "degradation": degradation,
                 }
 
                 # Only run the fault classifier once an alert is CONFIRMED
@@ -240,7 +244,15 @@ def create_engine(serial_number: str, model: str = "", uav_id: str = "", db: Ses
     db.refresh(engine)
     return {"id": engine.id, "serial_number": engine.serial_number}
 
-
+@app.get("/engines")
+def list_engines(db: Session = Depends(get_db)):
+    """Lists all registered engines -- used by the dashboard to populate
+    the engine selector when starting a new mission."""
+    rows = db.query(Engine).all()
+    return [
+        {"id": e.id, "serial_number": e.serial_number, "model": e.model, "uav_id": e.uav_id}
+        for e in rows
+    ]
 @app.post("/missions/start")
 async def start_mission(engine_id: int, profile: str = "cruise", db: Session = Depends(get_db)):
     """
@@ -338,6 +350,44 @@ def get_health_history(mission_id: int, limit: int = 200, db: Session = Depends(
         {"sim_time_s": r.sim_time_s, "health_score": r.health_score, "rul_hours": r.rul_hours}
         for r in reversed(rows)
     ]
+
+
+@app.get("/missions/{mission_id}/degradation")
+def get_degradation_summary(mission_id: int, limit: int = 200, db: Session = Depends(get_db)):
+    """Returns the current health-degradation state for a completed or active mission."""
+    rows = (
+        db.query(HealthIndex)
+        .filter(HealthIndex.mission_id == mission_id)
+        .order_by(HealthIndex.sim_time_s.desc())
+        .limit(limit)
+        .all()
+    )
+    points = [(row.sim_time_s, row.health_score) for row in reversed(rows)]
+    return summarize_degradation(points)
+
+
+@app.get("/missions/{mission_id}/degradation/trend")
+def get_degradation_trend(mission_id: int, limit: int = 200, db: Session = Depends(get_db)):
+    """Returns projected health scores based on the recent degradation trend."""
+    rows = (
+        db.query(HealthIndex)
+        .filter(HealthIndex.mission_id == mission_id)
+        .order_by(HealthIndex.sim_time_s.desc())
+        .limit(limit)
+        .all()
+    )
+    points = [(row.sim_time_s, row.health_score) for row in reversed(rows)]
+    summary = summarize_degradation(points)
+    return {
+        "mission_id": mission_id,
+        "current_health_score": summary["health_score"],
+        "degradation_rate_per_hour": summary["degradation_rate_per_hour"],
+        "predicted_health_1h": summary["predicted_health_1h"],
+        "predicted_health_6h": summary["predicted_health_6h"],
+        "trend_confidence": summary["trend_confidence"],
+        "state": summary["state"],
+        "sample_count": summary["sample_count"],
+    }
 
 
 @app.get("/missions/{mission_id}/faults")
